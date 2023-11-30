@@ -3,6 +3,7 @@ Predicting the celltype from gene motifs in mouse development
 
 ## Project on kaggle
 This is a KaggleInClass challenge, you can find at https://www.kaggle.com/c/antechinus/.
+
 Won in the second place in public Leadboard and sixteen place in private Leadboard, named Xin Hong
 
 ## Implementation
