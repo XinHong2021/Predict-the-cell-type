@@ -1,0 +1,348 @@
+---
+title: "ETC3250/5250 - Project 2022"
+subtitle: Predicting the celltype from gene motifs in mouse development
+author: developed by Professor Di Cook, with data from Emily Wong's lab
+output:
+  html_document:
+    df_print: paged
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  eval = FALSE,
+  message = FALSE,
+  warning = FALSE)
+```
+
+## Evaluation Criteria
+
+The kaggle criteria CategorizationAccuracy is used to assess your prediction. 
+
+$$\mbox{Accuracy}(y, \hat{y}) = \frac{1}{n}\sum_{i=1}^n I(y==\hat{y})$$
+
+NOTE: This is an imbalanced class problem, but this metric ignores this. My initial project description used the `WeightedClassificationAccuracy`, but it is not clear how this is being calculated inside kaggle. The imbalance is not very severe, and the classification is very difficult, anyway, so I've simplified the metric.
+
+
+```{r}
+library(tidyverse)
+# Read data
+# full training set
+tr <- read_csv("mouse_tr.csv") %>%
+  mutate(celltype = factor(celltype))
+# contains the test set that you need to predict, has all of the same variables as the training set except for the celltype variable
+ts <- read_csv("mouse_ts_mask.csv")
+```
+
+### MDS
+```{r}
+distance <- tr %>% select_if(is.numeric) %>% scale %>% dist
+pull(tr) -> attributes(distance)$labels
+mdsdis <- cmdscale(distance)
+```
+
+```{r}
+library(ggplot2)
+mdsvis <- mdsdis %>% as_tibble(rownames = "location") %>% mutate(celltype = tr$celltype)
+mdsvis%>% ggplot(aes(x=V1,y=V2, label=location, color=celltype)) + geom_text()
+```
+
+```{r}
+indx <- c(1327,229,5029,3727,2861,5971,1543,3445,2986,3541,3277,3445,718,2576,1796.2721,2897,3220,862,5949,1631,4966,3589,244,1834,6264)
+
+library(tidyverse)
+trinx <- tr %>% mutate(index = 1:6324) %>% filter(!index %in% indx)
+```
+
+### lasso
+
+```{r}
+lambda = c(2000,1000,500)
+library(glmnet)
+lassoreg = cv.glmnet(x = as.matrix(trinx%>% select(-location)),
+                     y = trinx$location,
+                     alpha = 1,
+                     lambda = lambda)
+
+```
+
+## lambda不同的情况下，删除coef=0的变量，筛选出部分variables
+```{r}
+
+```
+
+
+
+### boosted tree
+
+```{r}
+library(gbm)
+boostree <- gbm(celltype~.,distribution = "multinomial",data=datapcava10,
+                n.trees=2000,
+                shrinkage = 0.05,
+                n.minobsinnode = 20,
+                cv.folds=10)
+```
+
+
+```{r}
+tspca <- (data.matrix(ts%>%select(-location))) %*% (data.matrix(pcavariable))
+tspca <- as_tibble(tspca)
+pred_ts <- boostree %>% predict.gbm(newdata=tspca,type = "response")
+pred_ts <- as_tibble(pred_ts) 
+pred_class <- colnames(pred_ts)[apply(pred_ts,1,which.max)]
+pred_class <- as_tibble(pred_class) %>% mutate(ts$location)
+library(stringr)
+pred_class$value <- str_sub(pred_class$value,1,-5)
+colnames(pred_class) <- c("celltype","location")
+pred_class <- pred_class %>% select(location,celltype)
+write_csv(pred_class,file = "pred_4.csv")
+```
+
+## training data accuracy 
+```{r}
+library(gbm)
+pred_tr <- boostree2 %>% predict.gbm(newdata=trinxbo,type = "response")
+predr_class <- colnames(pred_tr)[apply(pred_tr,1,which.max)]
+predr_y <- as_tibble(predr_class) %>% mutate(celltype = trinx$celltype)
+mean(predr_y$celltype == predr_y$value)
+```
+
+## PCA boostrap
+```{r}
+library(boot)
+compute_PC2 <- function(data, index) {
+  pc2 <- prcomp(data[index,], center=TRUE, scale=TRUE)$rotation[,2]
+  # Coordinate signs
+  if (sign(pc2[31]) < 0) 
+    pc2 <- -pc2
+  return(pc2)
+}
+
+# Make sure sign of second PC element is positive
+PC2_boot <- boot(data=trinx%>%select(-c(location,index,celltype)), compute_PC2, R=500)
+```
+
+# boost tree
+```{r}
+library(gbm)
+trinxbo <- trinx %>% select(-c(index,location))
+boostree2 <- gbm(celltype~.,distribution = "multinomial",data=trinxbo,
+                n.trees=4000,
+                shrinkage = 0.08,
+                n.minobsinnode = 50,
+                cv.folds=10)
+```
+
+```{r}
+pred_ts <- boostree2 %>% predict.gbm(newdata=ts%>%select(-location),type = "response")
+pred_ts <- as_tibble(pred_ts) 
+```
+
+
+## PCA1
+```{r}
+pcatr <- trinx %>% dplyr::select(-c(index,celltype,location)) %>% prcomp(scale. = TRUE,center=TRUE)
+screeplot(pcatr,type="lines")
+rotationpca <- pcatr$rotation %>% as_tibble()
+datapca <- pcatr$x %>% as_tibble()
+library(tidyverse)
+variables <- paste0("PC",1:200)
+datapcava10 <- datapca %>% select(variables) %>% mutate(celltype = trinx$celltype)
+pcavariable <- rotationpca %>% select(variables)
+```
+
+```{r}
+pred_class <- colnames(pred_ts)[apply(pred_ts,1,which.max)]
+pred_class <- as_tibble(pred_class) %>% mutate(ts$location)
+library(stringr)
+pred_class$value <- str_sub(pred_class$value,1,-5)
+colnames(pred_class) <- c("celltype","location")
+pred_class <- pred_class %>% select(location,celltype)
+write_csv(pred_class,file = "pred_shrin15_8.csv")
+```
+
+```{r}
+
+```
+
+
+
+
+
+
+
+```{r}
+library(glmnet)
+x <- trinx %>% dplyr::select(-c(celltype,index))
+lassreg <- cglmnet(x = x,
+                     y=trinx$celltype,
+                     alpha=1, family = "multinomial", type.multinomial="grouped")
+```
+
+
+
+
+
+```{r}
+library(glmnet)
+lassreg <- cv.glmnet(x = tr%>%select(-c(celltype,y)),
+                     y=tr$y,
+                     alpha=1, family = "multinomial")
+```
+
+
+```{r}
+per <- function(x) {x/sum(x)}
+tr_per <- tr %>% mutate_if(is.numeric,per)
+ts_per <- ts %>% mutate_if(is.numeric,per)
+```
+
+# svm
+
+```{r}
+library(kernlab)
+library(tidymodels)
+
+svm_mod <-
+  svm_rbf(cost = 10) %>%
+  set_mode("classification") %>%
+  set_engine("kernlab", 
+             kernel="vanilladot", # linear kernel, see ?kernlab::ksvm()
+             scaled = FALSE)
+
+tr_svm <- svm_mod %>% fit(celltype~., data = tr_per)
+
+ts_pred_svm <- ts %>% mutate(pred_y = predict(tr_svm, ts)$.pred_class)
+```
+
+
+
+```{r}
+library(glmnet)
+lambda <- seq(1,1000,10)
+tr <- tr %>% mutate(y=factor(y)) %>% drop_na()
+lassreg <- cv.glmnet(x = tr%>%select(-c(celltype,y)),
+                     y=tr$y,
+                     alpha=1, family = "multinomial")
+```
+
+
+```{r}
+lassreg$coef
+```
+
+
+
+
+
+
+
+## neural networks
+```{r}
+## neural network
+library(keras)
+library(tensorflow)
+# Modeling helper package - not necessary for reproducibility
+# library(tfestimators)  # provides grid search & model training interface
+```
+
+```{r}
+std <- function(x) {(x-mean(x))/sd(x)}
+tr_std <- tr %>%
+  mutate_if(is.numeric, std) 
+ts_std <- ts %>% 
+  mutate_if(is.numeric,std)
+```
+
+```{r}
+per <- function(x) {x/sum(x)}
+ts_per <- ts %>% mutate_if(is.numeric,per)
+```
+
+```{r}
+model <- keras_model_sequential() %>% 
+  layer_dense(units = 256, activation = "relu", input_shape = 1003) %>%
+    layer_dense(units=64,activation="relu") %>%
+  layer_dense(units=64,activation="relu") %>%
+  layer_dense(units=10, activation = "softmax") %>%
+  compile(loss = "categorical_crossentropy", 
+          metrics = 'accuracy')
+
+predict_y <- predict(model,data.matrix(ts))
+colnames(predict_y) <- c("cardiomyocyte", "endothelium", "erythroid","forebrain","gut","mesenchyme","mid_hindbrain","neural_crest","somitic_mesoderm","spinalCord")
+
+pred_class <- colnames(predict_y)[apply(predict_y,1,which.max)]
+
+pred_y <- ts_per %>% mutate(celltype = mouse_ts_samp$celltype, 
+                        pred=pred_class) %>% 
+  select(celltype,pred)
+
+mean(pred_y$celltype == pred_y$pred)
+```
+
+```{r}
+model <- keras_model_sequential() %>% 
+  layer_dense(units = 256, activation = "relu", input_shape = 1003) %>%
+    layer_dense(units=64,activation="relu") %>%
+  layer_dense(units=64,activation="relu") %>%
+  layer_dense(units=10, activation = "softmax") %>%
+  compile(loss = "categorical_crossentropy", 
+          metrics = 'accuracy')
+
+tr <- tr %>% mutate(y = NULL)
+tr$y[tr$celltype == 'cardiomyocyte'] <- 0
+tr$y[tr$celltype == 'endothelium'] <- 1
+tr$y[tr$celltype == 'erythroid'] <- 2
+tr$y[tr$celltype == 'forebrain'] <- 3
+tr$y[tr$celltype == 'gut'] <- 4
+tr$y[tr$celltype == 'mesenchyme'] <- 5
+tr$y[tr$celltype == 'mid_hindbrain'] <- 6
+tr$y[tr$celltype == 'neural_crest'] <- 7
+tr$y[tr$celltype == 'somitic_mesoderm'] <- 8
+tr$y[tr$celltype == 'spinalCord'] <- 9
+y = tr$y
+ca_try <- to_categorical(y,10)
+var_x <- data.matrix(tr[,c(-1004,-1005)])
+tr_fit <- model %>% fit(x = var_x, 
+                        y = ca_try, 
+                        batch_size = 200, 
+                        epochs = 35, 
+                        validation_split = 0.3)
+```
+
+```{r}
+plot(tr_fit)
+```
+
+
+
+
+```{r}
+# random foest
+library(tidymodels)
+library(randomForest)
+
+
+# Fit a basic model
+mouse_rf <- rand_forest() %>%
+  set_engine("randomForest",
+             importance=TRUE) %>%
+  set_mode("classification") %>%
+  fit(celltype~., data=tr[,-1])
+```
+
+
+```{r}
+conf_mat(tr_pred, celltype, pred)
+conf_mat(tr_pred, celltype, pred) %>% summary
+
+# Make predictions
+mouse_pred <- ts %>%
+  mutate(celltype = ts_sol$celltype,
+                         pred = predict(tr_f, ts))
+
+write_csv(mouse_pred[,c(1, 1006)], file="mouse_mypred.csv")
+```
+
